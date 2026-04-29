@@ -1,0 +1,22 @@
+# Example: run kran beside your stack. Mount the host Docker socket so kran can
+# list/pull/recreate containers on this machine.
+#
+#   docker compose -f docker-compose.example.yaml up -d
+#
+# Use --label-enable and label workloads with kran.enable=true, or omit
+# --label-enable to watch every running container (see README).
+
+services:
+  kran:
+    container_name: kran
+    image: ghcr.io/glaslos/kran:latest
+    # build: .
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      KRAN_INTERVAL: 5m
+      # KRAN_LABEL_ENABLE: "1"
+    command:
+      - "--label-enable"
+      - "--self-name=kran"
