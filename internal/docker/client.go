@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 
@@ -43,59 +44,86 @@ func (c *Client) Close() error {
 
 // ListRunning returns running containers.
 func (c *Client) ListRunning(ctx context.Context) ([]types.Container, error) {
-	return c.cli.ContainerList(ctx, container.ListOptions{All: false})
+	list, err := c.cli.ContainerList(ctx, container.ListOptions{All: false})
+	if err != nil {
+		return nil, fmt.Errorf("docker: list containers: %w", err)
+	}
+	return list, nil
 }
 
 // Inspect returns full container JSON.
 func (c *Client) Inspect(ctx context.Context, id string) (types.ContainerJSON, error) {
-	return c.cli.ContainerInspect(ctx, id)
+	in, err := c.cli.ContainerInspect(ctx, id)
+	if err != nil {
+		return types.ContainerJSON{}, fmt.Errorf("docker: inspect container %s: %w", id, err)
+	}
+	return in, nil
 }
 
 // ImageInspect returns local image details.
 func (c *Client) ImageInspect(ctx context.Context, id string) (types.ImageInspect, error) {
 	ins, _, err := c.cli.ImageInspectWithRaw(ctx, id)
-	return ins, err
+	if err != nil {
+		return types.ImageInspect{}, fmt.Errorf("docker: inspect image %q: %w", id, err)
+	}
+	return ins, nil
 }
 
 // PullImage pulls an image ref, discarding progress output.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
 	r, err := c.cli.ImagePull(ctx, ref, image.PullOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("docker: pull %q: %w", ref, err)
 	}
-	_, _ = io.Copy(io.Discard, r)
-	return r.Close()
+	_, copyErr := io.Copy(io.Discard, r)
+	closeErr := r.Close()
+	if copyErr != nil {
+		return fmt.Errorf("docker: pull %q: read progress: %w", ref, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("docker: pull %q: close body: %w", ref, closeErr)
+	}
+	return nil
 }
 
 // Stop stops a container; timeout is rounded to whole seconds (minimum 1 if non-zero).
 func (c *Client) Stop(ctx context.Context, id string, timeoutSec *int) error {
-	return c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: timeoutSec})
+	if err := c.cli.ContainerStop(ctx, id, container.StopOptions{Timeout: timeoutSec}); err != nil {
+		return fmt.Errorf("docker: stop container %s: %w", id, err)
+	}
+	return nil
 }
 
 // Remove removes a container.
 func (c *Client) Remove(ctx context.Context, id string) error {
-	return c.cli.ContainerRemove(ctx, id, container.RemoveOptions{RemoveVolumes: false, Force: true})
+	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{RemoveVolumes: false, Force: true}); err != nil {
+		return fmt.Errorf("docker: remove container %s: %w", id, err)
+	}
+	return nil
 }
 
 // Create creates a container.
 func (c *Client) Create(ctx context.Context, name string, cfg *container.Config, hostConfig *container.HostConfig, networking *network.NetworkingConfig) (string, error) {
 	createResp, err := c.cli.ContainerCreate(ctx, cfg, hostConfig, networking, nil, name)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("docker: create container %q: %w", name, err)
 	}
 	return createResp.ID, nil
 }
 
 // Start starts a container.
 func (c *Client) Start(ctx context.Context, id string) error {
-	return c.cli.ContainerStart(ctx, id, container.StartOptions{})
+	if err := c.cli.ContainerStart(ctx, id, container.StartOptions{}); err != nil {
+		return fmt.Errorf("docker: start container %s: %w", id, err)
+	}
+	return nil
 }
 
 // PruneDanglingImages removes dangling images after updates (best-effort).
 func (c *Client) PruneDanglingImages(ctx context.Context) error {
 	report, err := c.cli.ImagesPrune(ctx, filters.Args{})
 	if err != nil {
-		return err
+		return fmt.Errorf("docker: prune images: %w", err)
 	}
 	_ = report
 	return nil

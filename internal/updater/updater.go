@@ -54,11 +54,23 @@ func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker) 
 			return ctx.Err()
 		default:
 		}
+		hintName, hintImage := listContainerHint(c)
 		if err := processContainer(ctx, log, cfg, dc, c.ID); err != nil {
-			log.Warn("container skipped or failed", "id", c.ID, "err", err)
+			log.Warn("container skipped or failed",
+				"id", c.ID,
+				"container", hintName,
+				"image", hintImage,
+				"err", err)
 		}
 	}
 	return nil
+}
+
+func listContainerHint(c types.Container) (name, image string) {
+	if len(c.Names) > 0 {
+		name = strings.TrimPrefix(c.Names[0], "/")
+	}
+	return name, c.Image
 }
 
 func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, id string) error {
@@ -70,34 +82,72 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 		return nil
 	}
 
-	name := strings.TrimPrefix(in.Name, "/")
-	imageRef := strings.TrimSpace(in.Config.Image)
-	if imageRef == "" {
+	name, imageRef, oldImageID, ok := containerImageState(in)
+	if !ok {
 		return nil
 	}
 
-	oldID := normalizeImageID(in.Image)
+	log.Debug("checking container",
+		"container", name,
+		"image", imageRef,
+		"container_id", shortID(id))
 
-	if err := dc.PullImage(ctx, imageRef); err != nil {
-		return err
-	}
-	newImg, err := dc.ImageInspect(ctx, imageRef)
+	changed, newImageID, err := imageChangedAfterPull(ctx, dc, imageRef, oldImageID)
 	if err != nil {
 		return err
 	}
-	newID := normalizeImageID(newImg.ID)
-	if oldID == newID {
-		log.Debug("image up to date", "container", name, "image", imageRef)
+	if !changed {
+		log.Debug("image up to date",
+			"container", name,
+			"image", imageRef,
+			"image_id", shortID(oldImageID))
 		return nil
 	}
 
-	log.Info("new image available", "container", name, "image", imageRef)
+	log.Info("new image available",
+		"container", name,
+		"image", imageRef,
+		"old_image_id", shortID(oldImageID),
+		"new_image_id", shortID(newImageID))
 
 	if cfg.DryRun {
-		log.Info("dry-run: would recreate container", "container", name)
+		log.Info("dry-run: would recreate container",
+			"container", name,
+			"image", imageRef,
+			"old_image_id", shortID(oldImageID),
+			"new_image_id", shortID(newImageID))
 		return nil
 	}
 
+	return recreateContainer(ctx, log, cfg, dc, id, in, imageRef)
+}
+
+func containerImageState(in types.ContainerJSON) (name, imageRef, oldImageID string, ok bool) {
+	if in.Config == nil {
+		return "", "", "", false
+	}
+	name = strings.TrimPrefix(in.Name, "/")
+	imageRef = strings.TrimSpace(in.Config.Image)
+	if imageRef == "" {
+		return "", "", "", false
+	}
+	oldImageID = normalizeImageID(in.Image)
+	return name, imageRef, oldImageID, true
+}
+
+func imageChangedAfterPull(ctx context.Context, dc Docker, imageRef, oldImageID string) (changed bool, newImageID string, err error) {
+	if err := dc.PullImage(ctx, imageRef); err != nil {
+		return false, "", err
+	}
+	newImg, err := dc.ImageInspect(ctx, imageRef)
+	if err != nil {
+		return false, "", err
+	}
+	newID := normalizeImageID(newImg.ID)
+	return oldImageID != newID, newID, nil
+}
+
+func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, oldCID string, in types.ContainerJSON, imageRef string) error {
 	params, err := recreate.FromInspect(in, imageRef)
 	if err != nil {
 		return err
@@ -108,10 +158,10 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 		sec = 1
 	}
 
-	if err := dc.Stop(ctx, id, &sec); err != nil {
+	if err := dc.Stop(ctx, oldCID, &sec); err != nil {
 		return err
 	}
-	if err := dc.Remove(ctx, id); err != nil {
+	if err := dc.Remove(ctx, oldCID); err != nil {
 		return err
 	}
 
@@ -123,7 +173,10 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 		return err
 	}
 
-	log.Info("recreated container", "container", params.Name, "new_id", newCID)
+	log.Info("recreated container",
+		"container", params.Name,
+		"old_container_id", shortID(oldCID),
+		"new_container_id", shortID(newCID))
 
 	if cfg.Cleanup {
 		if err := dc.PruneDanglingImages(ctx); err != nil {
@@ -131,6 +184,14 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 		}
 	}
 	return nil
+}
+
+func shortID(id string) string {
+	id = normalizeImageID(id)
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func normalizeImageID(id string) string {

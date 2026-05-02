@@ -31,6 +31,36 @@ Mounting `docker.sock` grants control over the host’s Docker daemon (and effec
 
 Containers with label `kran.ignore=true` are never updated.
 
+## Docker Compose labels
+
+By default (`-label-enable` off), kran considers **every running container** except those labeled `kran.ignore=true` and the container named by `-self-name` (if set).
+
+With **opt-in mode** (`--label-enable` or `KRAN_LABEL_ENABLE=1`), only containers that include `kran.enable=true` are updated. Use this when several stacks share one daemon and you want explicit control.
+
+Compose merges `labels` onto the container; values are strings, so use `"true"` for booleans.
+
+**Enable updates for one service** (when kran runs with `--label-enable`):
+
+```yaml
+services:
+  app:
+    image: my/app:latest
+    labels:
+      kran.enable: "true"
+```
+
+**Never recreate a service** (for example a database or the kran container itself via compose):
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    labels:
+      kran.ignore: "true"
+```
+
+For wiring kran itself (socket mount, `--self-name`, optional `--label-enable`), see [`docker-compose.example.yaml`](docker-compose.example.yaml).
+
 ## GitHub Container Registry
 
 CI publishes **`ghcr.io/glaslos/kran`** on pushes to `main` and on version tags.
