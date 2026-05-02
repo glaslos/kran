@@ -28,6 +28,7 @@ Mounting `docker.sock` grants control over the host’s Docker daemon (and effec
 | `-cleanup` / `KRAN_CLEANUP` | After a successful recreate, prune dangling images |
 | `-stop-timeout` / `KRAN_STOP_TIMEOUT` | Grace period before SIGKILL when stopping (default `10s`) |
 | `-log-json` / `KRAN_LOG_JSON` | Emit structured JSON logs |
+| `-log-level` / `KRAN_LOG_LEVEL` | Minimum log level: `debug`, `info`, `warn`, `error` (default `info`) |
 
 Containers with label `kran.ignore=true` are never updated.
 

@@ -51,7 +51,7 @@ func run() error {
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
 	var h slog.Handler
 	if cfg.LogJSON {
 		h = slog.NewJSONHandler(os.Stdout, opts)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ const (
 	EnvCleanup     = "KRAN_CLEANUP"
 	EnvStopTimeout = "KRAN_STOP_TIMEOUT"
 	EnvLogJSON     = "KRAN_LOG_JSON"
+	EnvLogLevel    = "KRAN_LOG_LEVEL"
 )
 
 const DefaultDockerHost = "unix:///var/run/docker.sock"
@@ -36,6 +38,7 @@ type Config struct {
 	Cleanup     bool
 	StopTimeout time.Duration
 	LogJSON     bool
+	LogLevel    slog.Level
 }
 
 // FromArgs parses os.Args[1:] into Config.
@@ -57,6 +60,7 @@ func FromArgs(args []string) (*Config, error) {
 		cleanup     = fs.Bool("cleanup", envBool(EnvCleanup), "remove dangling images after a successful update")
 		stopTimeout = fs.Duration("stop-timeout", 10*time.Second, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
 		logJSON     = fs.Bool("log-json", envBool(EnvLogJSON), "emit logs as JSON (or "+EnvLogJSON+"=1)")
+		logLevel    = fs.String("log-level", "info", "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
 	)
 
 	fs.Usage = printUsage
@@ -83,6 +87,15 @@ func FromArgs(args []string) (*Config, error) {
 		*stopTimeout = d
 	}
 
+	logLevelStr := strings.TrimSpace(*logLevel)
+	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
+		logLevelStr = v
+	}
+	parsedLevel, err := parseLogLevel(logLevelStr)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Interval:    *interval,
 		DockerHost:  *dockerHost,
@@ -92,6 +105,7 @@ func FromArgs(args []string) (*Config, error) {
 		Cleanup:     *cleanup,
 		StopTimeout: *stopTimeout,
 		LogJSON:     *logJSON,
+		LogLevel:    parsedLevel,
 	}
 
 	if cfg.Interval < time.Second {
@@ -124,9 +138,22 @@ func printUsage() {
 	fmt.Fprintln(out, "    SIGTERM grace before SIGKILL (default 10s)")
 	fmt.Fprintln(out, "  -log-json")
 	fmt.Fprintln(out, "    JSON logs (env KRAN_LOG_JSON)")
+	fmt.Fprintln(out, "  -log-level string")
+	fmt.Fprintln(out, "    debug, info, warn, error (env "+EnvLogLevel+", default info)")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Environment: KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
-	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON")
+	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel)
+}
+
+func parseLogLevel(s string) (slog.Level, error) {
+	if s == "" {
+		return 0, errors.New("empty log level")
+	}
+	var lvl slog.Level
+	if err := lvl.UnmarshalText([]byte(strings.ToUpper(strings.TrimSpace(s)))); err != nil {
+		return 0, fmt.Errorf("invalid log level %q (use debug, info, warn, error): %w", s, err)
+	}
+	return lvl, nil
 }
 
 func envOr(key, def string) string {

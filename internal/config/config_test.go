@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 func TestFromArgs_defaults(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "")
 	t.Setenv("DOCKER_HOST", "")
+	t.Setenv(EnvLogLevel, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -22,10 +24,14 @@ func TestFromArgs_defaults(t *testing.T) {
 	if cfg.StopTimeout != 10*time.Second {
 		t.Fatalf("StopTimeout: got %v", cfg.StopTimeout)
 	}
+	if cfg.LogLevel != slog.LevelInfo {
+		t.Fatalf("LogLevel: got %v want info", cfg.LogLevel)
+	}
 }
 
 func TestFromArgs_envInterval(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "10m")
+	t.Setenv(EnvLogLevel, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -61,8 +67,30 @@ func TestTruth_envBool(t *testing.T) {
 	}
 }
 
+func TestFromArgs_LogLevelEnv(t *testing.T) {
+	t.Setenv(EnvLogLevel, "debug")
+	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
+	cfg, err := FromArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogLevel != slog.LevelDebug {
+		t.Fatalf("LogLevel: got %v want debug", cfg.LogLevel)
+	}
+}
+
+func TestFromArgs_invalidLogLevel(t *testing.T) {
+	t.Setenv(EnvLogLevel, "verbose")
+	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
+	_, err := FromArgs(nil)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestFromArgs_LabelEnableEnv(t *testing.T) {
 	t.Setenv(EnvLabelEnable, "1")
+	t.Setenv(EnvLogLevel, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLabelEnable) })
 	cfg, err := FromArgs(nil)
 	if err != nil {
