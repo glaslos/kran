@@ -14,8 +14,11 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      # Optional: mount a YAML/JSON config (set KRAN_CONFIG or pass --config).
+      # - ./kran.yaml:/etc/kran/kran.yaml:ro
     environment:
       KRAN_INTERVAL: 5m
+      # KRAN_CONFIG: /etc/kran/kran.yaml
       # KRAN_LABEL_ENABLE: "1"
     command:
       - "--label-enable"

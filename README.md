@@ -18,8 +18,19 @@ Mounting `docker.sock` grants control over the host’s Docker daemon (and effec
 
 ## Configuration
 
+You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`).
+
+Example:
+
+```yaml
+interval: 10m
+label_enable: true
+self_name: kran
+```
+
 | Flag / env | Meaning |
 |------------|---------|
+| `-config` / `KRAN_CONFIG` | Path to YAML or JSON settings file |
 | `-interval` / `KRAN_INTERVAL` | Poll interval (default `5m`) |
 | `-docker-host` / `DOCKER_HOST` | Daemon address (default `unix:///var/run/docker.sock`) |
 | `-label-enable` / `KRAN_LABEL_ENABLE` | Only update containers with label `kran.enable=true` |

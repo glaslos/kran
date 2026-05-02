@@ -50,17 +50,92 @@ func FromArgs(args []string) (*Config, error) {
 		}
 	}
 
+	var fc *fileConfig
+	configPath := configPathFromArgs(args)
+	if configPath != "" {
+		var err error
+		fc, err = loadConfigFile(configPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	intervalDef := 5 * time.Minute
+	if fc != nil && fc.Interval != nil && strings.TrimSpace(*fc.Interval) != "" {
+		d, err := parseDurationField("interval", *fc.Interval)
+		if err != nil {
+			return nil, err
+		}
+		intervalDef = d
+	}
+
+	dockerHostDef := DefaultDockerHost
+	if fc != nil && fc.DockerHost != nil && strings.TrimSpace(*fc.DockerHost) != "" {
+		dockerHostDef = strings.TrimSpace(*fc.DockerHost)
+	}
+	dockerHostDef = envOr(EnvDockerHost, dockerHostDef)
+
+	labelEnableDef := false
+	if v := os.Getenv(EnvLabelEnable); v != "" {
+		labelEnableDef = truthy(v)
+	} else if fc != nil && fc.LabelEnable != nil {
+		labelEnableDef = *fc.LabelEnable
+	}
+
+	selfNameDef := ""
+	if v := os.Getenv(EnvSelfName); v != "" {
+		selfNameDef = strings.TrimSpace(v)
+	} else if fc != nil && fc.SelfName != nil {
+		selfNameDef = strings.TrimSpace(*fc.SelfName)
+	}
+
+	dryRunDef := false
+	if v := os.Getenv(EnvDryRun); v != "" {
+		dryRunDef = truthy(v)
+	} else if fc != nil && fc.DryRun != nil {
+		dryRunDef = *fc.DryRun
+	}
+
+	cleanupDef := false
+	if v := os.Getenv(EnvCleanup); v != "" {
+		cleanupDef = truthy(v)
+	} else if fc != nil && fc.Cleanup != nil {
+		cleanupDef = *fc.Cleanup
+	}
+
+	stopTimeoutDef := 10 * time.Second
+	if fc != nil && fc.StopTimeout != nil && strings.TrimSpace(*fc.StopTimeout) != "" {
+		d, err := parseDurationField("stop_timeout", *fc.StopTimeout)
+		if err != nil {
+			return nil, err
+		}
+		stopTimeoutDef = d
+	}
+
+	logJSONDef := false
+	if v := os.Getenv(EnvLogJSON); v != "" {
+		logJSONDef = truthy(v)
+	} else if fc != nil && fc.LogJSON != nil {
+		logJSONDef = *fc.LogJSON
+	}
+
+	logLevelDef := "info"
+	if fc != nil && fc.LogLevel != nil && strings.TrimSpace(*fc.LogLevel) != "" {
+		logLevelDef = strings.TrimSpace(*fc.LogLevel)
+	}
+
 	fs := flag.NewFlagSet("kran", flag.ContinueOnError)
+	fs.String("config", "", "path to YAML or JSON config file (or "+EnvConfig+")")
 	var (
-		interval    = fs.Duration("interval", 5*time.Minute, "poll interval (e.g. 5m, 24h)")
-		dockerHost  = fs.String("docker-host", envOr(EnvDockerHost, DefaultDockerHost), "Docker daemon address (or "+EnvDockerHost+")")
-		labelEnable = fs.Bool("label-enable", false, "only update containers with label "+LabelEnableKey+"=true (or "+EnvLabelEnable+"=1)")
-		selfName    = fs.String("self-name", os.Getenv(EnvSelfName), "container name to exclude (this updater), without leading slash (or "+EnvSelfName+")")
-		dryRun      = fs.Bool("dry-run", envBool(EnvDryRun), "log actions only, do not change containers")
-		cleanup     = fs.Bool("cleanup", envBool(EnvCleanup), "remove dangling images after a successful update")
-		stopTimeout = fs.Duration("stop-timeout", 10*time.Second, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
-		logJSON     = fs.Bool("log-json", envBool(EnvLogJSON), "emit logs as JSON (or "+EnvLogJSON+"=1)")
-		logLevel    = fs.String("log-level", "info", "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
+		interval    = fs.Duration("interval", intervalDef, "poll interval (e.g. 5m, 24h)")
+		dockerHost  = fs.String("docker-host", dockerHostDef, "Docker daemon address (or "+EnvDockerHost+")")
+		labelEnable = fs.Bool("label-enable", labelEnableDef, "only update containers with label "+LabelEnableKey+"=true (or "+EnvLabelEnable+"=1)")
+		selfName    = fs.String("self-name", selfNameDef, "container name to exclude (this updater), without leading slash (or "+EnvSelfName+")")
+		dryRun      = fs.Bool("dry-run", dryRunDef, "log actions only, do not change containers")
+		cleanup     = fs.Bool("cleanup", cleanupDef, "remove dangling images after a successful update")
+		stopTimeout = fs.Duration("stop-timeout", stopTimeoutDef, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
+		logJSON     = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
+		logLevel    = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
 	)
 
 	fs.Usage = printUsage
@@ -122,6 +197,8 @@ func printUsage() {
 	fmt.Fprintln(out, "Usage: kran [flags]")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Flags:")
+	fmt.Fprintln(out, "  -config path")
+	fmt.Fprintln(out, "    YAML or JSON file with settings (env "+EnvConfig+"); see README")
 	fmt.Fprintln(out, "  -interval duration")
 	fmt.Fprintln(out, "    poll interval (default 5m0s)")
 	fmt.Fprintln(out, "  -docker-host string")
@@ -141,7 +218,7 @@ func printUsage() {
 	fmt.Fprintln(out, "  -log-level string")
 	fmt.Fprintln(out, "    debug, info, warn, error (env "+EnvLogLevel+", default info)")
 	fmt.Fprintln(out, "")
-	fmt.Fprintln(out, "Environment: KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
+	fmt.Fprintln(out, "Environment: "+EnvConfig+", KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
 	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel)
 }
 
@@ -161,10 +238,6 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
-}
-
-func envBool(key string) bool {
-	return truthy(os.Getenv(key))
 }
 
 func truthy(s string) bool {
