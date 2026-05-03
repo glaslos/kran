@@ -124,6 +124,38 @@ services:
 
 For wiring kran itself (socket mount, `--self-name`, optional `--label-enable`), see [`docker-compose.example.yaml`](docker-compose.example.yaml).
 
+## Linked container groups
+
+When several containers form one application (for example a database and an app), updating **one** image can require restarting **all** of them in a safe order. Use **`kran.link_group`** with the same value on every container that should roll out together, and **`kran.depends_on`** on each **dependent** container listing the **container names** it needs started first (comma-separated, as shown by `docker ps`, with or without a leading `/`).
+
+On each poll, kran pulls every group member’s image. If **any** member’s image digest changed, kran **recreates every managed member** of that group: **stop** in reverse dependency order (dependents before dependencies), then **create and start** in dependency order (dependencies before dependents). If **no** member changed, the group is left untouched.
+
+**Rules:**
+
+- Every container in the stack that should move together must share the same `kran.link_group` value and satisfy the usual `kran.enable` / `kran.ignore` rules.
+- Put `kran.depends_on` on the service that **waits on** others (same idea as Watchtower’s `depends-on` label). Only dependencies that are **also in the same link group** affect ordering; other names are ignored with a warning (often a typo or a dependency outside the group).
+- A **cycle** in `kran.depends_on` (within the group) causes the whole group update to be **skipped** for that tick with an error log.
+- If the group has **more than one** container but **no** usable dependency edges, kran uses a **deterministic name-based** order and logs a warning; prefer explicit `kran.depends_on` for real stacks.
+
+**Example** (Compose; use your real container names in `kran.depends_on`, for example `project_db_1` and `project_app_1`):
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    labels:
+      kran.enable: "true"
+      kran.link_group: "myapp"
+  app:
+    image: my/app:latest
+    labels:
+      kran.enable: "true"
+      kran.link_group: "myapp"
+      kran.depends_on: "db"
+```
+
+Linked stacks that use **`network_mode: service:…`** (shared network namespace) are still subject to the same recreate limitation as single containers (see [Limitations](#limitations)).
+
 ## GitHub Container Registry
 
 CI publishes **`ghcr.io/glaslos/kran`** on pushes to `main` and on version tags.
@@ -143,5 +175,5 @@ docker build -t kran:local .
 
 ## Limitations
 
-- **`NetworkMode=container:…`** (shared network stack) is not supported for recreate.
+- **`NetworkMode=container:…`** (shared network stack) is not supported for recreate (including grouped rollouts).
 - Very exotic `docker run` options may not round-trip perfectly through inspect; common Compose-style apps are the target.

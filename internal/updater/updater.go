@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/glaslos/kran/internal/config"
+	"github.com/glaslos/kran/internal/linkgroup"
 	"github.com/glaslos/kran/internal/metrics"
 	"github.com/glaslos/kran/internal/notify"
 	"github.com/glaslos/kran/internal/recreate"
@@ -52,7 +54,48 @@ func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, 
 		m.ObserveTick(time.Since(start), 0, 0, err)
 		return err
 	}
-	managedCount := 0
+
+	var managed []linkgroup.Member
+	for _, c := range list {
+		select {
+		case <-ctx.Done():
+			m.ObserveTick(time.Since(start), len(list), len(managed), ctx.Err())
+			return ctx.Err()
+		default:
+		}
+		in, err := dc.Inspect(ctx, c.ID)
+		if err != nil {
+			hintName, hintImage := listContainerHint(c)
+			log.Warn("inspect failed", "id", c.ID, "container", hintName, "image", hintImage, "err", err)
+			continue
+		}
+		if !Managed(in, cfg) {
+			continue
+		}
+		managed = append(managed, linkgroup.NewMember(c.ID, in))
+	}
+	managedCount := len(managed)
+
+	byGroup := linkgroup.ClusterByGroup(managed)
+	inLinkGroup := make(map[string]struct{})
+	for _, ms := range byGroup {
+		for _, mm := range ms {
+			inLinkGroup[mm.ID] = struct{}{}
+		}
+	}
+
+	for g, ms := range byGroup {
+		select {
+		case <-ctx.Done():
+			m.ObserveTick(time.Since(start), len(list), managedCount, ctx.Err())
+			return ctx.Err()
+		default:
+		}
+		if err := rolloutLinkGroup(ctx, log, cfg, dc, m, g, ms); err != nil {
+			log.Warn("link group skipped or failed", "link_group", g, "err", err)
+		}
+	}
+
 	for _, c := range list {
 		select {
 		case <-ctx.Done():
@@ -60,11 +103,11 @@ func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, 
 			return ctx.Err()
 		default:
 		}
-		hintName, hintImage := listContainerHint(c)
-		ok, err := processContainer(ctx, log, cfg, dc, m, c.ID)
-		if ok {
-			managedCount++
+		if _, grouped := inLinkGroup[c.ID]; grouped {
+			continue
 		}
+		hintName, hintImage := listContainerHint(c)
+		_, err := processContainer(ctx, log, cfg, dc, m, c.ID)
 		if err != nil {
 			log.Warn("container skipped or failed",
 				"id", c.ID,
@@ -135,6 +178,120 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 	return managed, recreateContainer(ctx, log, cfg, dc, m, id, in, imageRef)
 }
 
+func rolloutLinkGroup(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, group string, members []linkgroup.Member) error {
+	if len(members) == 0 {
+		return nil
+	}
+
+	memberByID := make(map[string]linkgroup.Member, len(members))
+	for _, mm := range members {
+		memberByID[mm.ID] = mm
+	}
+
+	anyChanged := false
+	for _, mm := range members {
+		_, imageRef, oldImageID, ok := containerImageState(mm.Inspect)
+		if !ok {
+			continue
+		}
+		log.Debug("checking link group container",
+			"link_group", group,
+			"container", mm.Name,
+			"image", imageRef,
+			"container_id", shortID(mm.ID))
+		changed, newImageID, err := imageChangedAfterPull(ctx, dc, m, imageRef, oldImageID)
+		if err != nil {
+			return err
+		}
+		if changed {
+			anyChanged = true
+			log.Info("new image available",
+				"link_group", group,
+				"container", mm.Name,
+				"image", imageRef,
+				"old_image_id", shortID(oldImageID),
+				"new_image_id", shortID(newImageID))
+		}
+	}
+	if !anyChanged {
+		return nil
+	}
+
+	orders, err := linkgroup.ComputeOrders(members, func(dep string) {
+		log.Warn("kran.depends_on does not match another container in the same link group (ignored)",
+			"link_group", group, "depends_on", dep)
+	})
+	if err != nil {
+		return err
+	}
+	if orders.Ambiguous {
+		log.Warn("link group has multiple containers but no kran.depends_on edges among members; using deterministic name order",
+			"link_group", group)
+	}
+
+	for _, mm := range members {
+		_, imageRef, _, ok := containerImageState(mm.Inspect)
+		if !ok {
+			return fmt.Errorf("container %q: no image in inspect", mm.Name)
+		}
+		if _, err := recreate.FromInspect(mm.Inspect, imageRef); err != nil {
+			return fmt.Errorf("container %q: %w", mm.Name, err)
+		}
+	}
+
+	if cfg.DryRun {
+		for _, mm := range members {
+			_, imageRef, _, ok := containerImageState(mm.Inspect)
+			if !ok {
+				continue
+			}
+			log.Info("dry-run: would recreate container (link group)",
+				"link_group", group,
+				"container", mm.Name,
+				"image", imageRef)
+			m.ObserveUpdate("dry_run", 0)
+		}
+		return nil
+	}
+
+	sec := int(cfg.StopTimeout.Round(time.Second) / time.Second)
+	if sec < 1 {
+		sec = 1
+	}
+
+	for _, id := range orders.Stop {
+		mm := memberByID[id]
+		if err := dc.Stop(ctx, id, &sec); err != nil {
+			return fmt.Errorf("stop %s: %w", mm.Name, err)
+		}
+		if err := dc.Remove(ctx, id, cfg.Cleanup); err != nil {
+			return fmt.Errorf("remove %s: %w", mm.Name, err)
+		}
+	}
+
+	for _, id := range orders.Start {
+		mm := memberByID[id]
+		_, imageRef, _, ok := containerImageState(mm.Inspect)
+		if !ok {
+			return fmt.Errorf("container %q: no image in inspect", mm.Name)
+		}
+		if err := createAndStartFromInspect(ctx, log, cfg, dc, m, mm.Inspect, imageRef, mm.ID); err != nil {
+			return fmt.Errorf("recreate %s: %w", mm.Name, err)
+		}
+	}
+
+	log.Info("recreated link group",
+		"link_group", group,
+		"containers", len(members))
+
+	if cfg.Cleanup {
+		if err := dc.PruneDanglingImages(ctx); err != nil {
+			log.Warn("image prune failed", "err", err)
+		}
+	}
+	return nil
+}
+
 func containerImageState(in types.ContainerJSON) (name, imageRef, oldImageID string, ok bool) {
 	if in.Config == nil {
 		return "", "", "", false
@@ -185,6 +342,29 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 		return err
 	}
 
+	if err := createAndStartFromParams(ctx, log, cfg, dc, m, recStart, params, imageRef, oldCID); err != nil {
+		return err
+	}
+
+	if cfg.Cleanup {
+		if err := dc.PruneDanglingImages(ctx); err != nil {
+			log.Warn("image prune failed", "err", err)
+		}
+	}
+	return nil
+}
+
+func createAndStartFromInspect(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, in types.ContainerJSON, imageRef, oldCID string) error {
+	params, err := recreate.FromInspect(in, imageRef)
+	if err != nil {
+		m.ObserveUpdate("failure", 0)
+		return err
+	}
+	recStart := time.Now()
+	return createAndStartFromParams(ctx, log, cfg, dc, m, recStart, params, imageRef, oldCID)
+}
+
+func createAndStartFromParams(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, recStart time.Time, params *recreate.Params, imageRef, oldCID string) error {
 	newCID, err := dc.Create(ctx, params.Name, params.Config, params.HostConfig, params.NetworkingConfig)
 	if err != nil {
 		m.ObserveUpdate("failure", time.Since(recStart))
@@ -209,12 +389,6 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 			m.ObserveNotify("failure")
 		} else {
 			m.ObserveNotify("success")
-		}
-	}
-
-	if cfg.Cleanup {
-		if err := dc.PruneDanglingImages(ctx); err != nil {
-			log.Warn("image prune failed", "err", err)
 		}
 	}
 	return nil

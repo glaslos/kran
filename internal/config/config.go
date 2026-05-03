@@ -27,8 +27,12 @@ const (
 
 const DefaultDockerHost = "unix:///var/run/docker.sock"
 
-const LabelEnableKey = "kran.enable"
-const LabelIgnoreKey = "kran.ignore"
+const (
+	LabelEnableKey    = "kran.enable"
+	LabelIgnoreKey    = "kran.ignore"
+	LabelLinkGroupKey = "kran.link_group"
+	LabelDependsOnKey = "kran.depends_on"
+)
 
 // Config holds runtime options for kran.
 type Config struct {
