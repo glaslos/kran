@@ -12,6 +12,7 @@ func TestFromArgs_defaults(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "")
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv(EnvLogLevel, "")
+	t.Setenv(EnvNotifyURL, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -33,6 +34,7 @@ func TestFromArgs_defaults(t *testing.T) {
 func TestFromArgs_envInterval(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "10m")
 	t.Setenv(EnvLogLevel, "")
+	t.Setenv(EnvNotifyURL, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +46,7 @@ func TestFromArgs_envInterval(t *testing.T) {
 
 func TestFromArgs_invalidInterval(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "not-a-duration")
+	t.Setenv(EnvNotifyURL, "")
 	_, err := FromArgs(nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -70,6 +73,7 @@ func TestTruth_envBool(t *testing.T) {
 
 func TestFromArgs_LogLevelEnv(t *testing.T) {
 	t.Setenv(EnvLogLevel, "debug")
+	t.Setenv(EnvNotifyURL, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
 	cfg, err := FromArgs(nil)
 	if err != nil {
@@ -82,6 +86,7 @@ func TestFromArgs_LogLevelEnv(t *testing.T) {
 
 func TestFromArgs_invalidLogLevel(t *testing.T) {
 	t.Setenv(EnvLogLevel, "verbose")
+	t.Setenv(EnvNotifyURL, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
 	_, err := FromArgs(nil)
 	if err == nil {
@@ -92,6 +97,7 @@ func TestFromArgs_invalidLogLevel(t *testing.T) {
 func TestFromArgs_LabelEnableEnv(t *testing.T) {
 	t.Setenv(EnvLabelEnable, "1")
 	t.Setenv(EnvLogLevel, "")
+	t.Setenv(EnvNotifyURL, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLabelEnable) })
 	cfg, err := FromArgs(nil)
 	if err != nil {
@@ -113,6 +119,7 @@ func TestFromArgs_configFile(t *testing.T) {
 	t.Setenv(EnvStopTimeout, "")
 	t.Setenv(EnvLogJSON, "")
 	t.Setenv(EnvConfig, "")
+	t.Setenv(EnvNotifyURL, "")
 
 	path := filepath.Join(t.TempDir(), "kran.yaml")
 	content := `
@@ -162,6 +169,7 @@ func TestFromArgs_configFile_envOverridesFile(t *testing.T) {
 	t.Setenv(EnvStopTimeout, "")
 	t.Setenv(EnvLogJSON, "")
 	t.Setenv(EnvConfig, "")
+	t.Setenv(EnvNotifyURL, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvInterval) })
 
 	path := filepath.Join(t.TempDir(), "kran.yaml")
@@ -183,5 +191,26 @@ func TestFromArgs_configFile_missing(t *testing.T) {
 	_, err := FromArgs([]string{"-config", filepath.Join(t.TempDir(), "nope.yaml")})
 	if err == nil {
 		t.Fatal("expected error for missing config file")
+	}
+}
+
+func TestFromArgs_notifyFromFile(t *testing.T) {
+	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvConfig, "")
+
+	path := filepath.Join(t.TempDir(), "kran.yaml")
+	content := `
+notify_url: gotify://push.example.com/message?token=secret&priority=8
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := FromArgs([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "gotify://push.example.com/message?token=secret&priority=8"
+	if cfg.NotifyURL != want {
+		t.Fatalf("NotifyURL: got %q want %q", cfg.NotifyURL, want)
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/glaslos/kran/internal/config"
 	"github.com/glaslos/kran/internal/docker"
+	"github.com/glaslos/kran/internal/notify"
 	"github.com/glaslos/kran/internal/updater"
 )
 
@@ -46,6 +47,12 @@ func run() error {
 		return fmt.Errorf("docker ping: %w", err)
 	}
 	log.Info("connected to docker", "host", cfg.DockerHost)
+
+	if cfg.NotifyURL != "" {
+		if err := notify.Validate(cfg.NotifyURL); err != nil {
+			return fmt.Errorf("notify-url: %w", err)
+		}
+	}
 
 	return updater.Run(ctx, log, cfg, dc)
 }

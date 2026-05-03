@@ -21,6 +21,7 @@ const (
 	EnvStopTimeout = "KRAN_STOP_TIMEOUT"
 	EnvLogJSON     = "KRAN_LOG_JSON"
 	EnvLogLevel    = "KRAN_LOG_LEVEL"
+	EnvNotifyURL   = "KRAN_NOTIFY_URL"
 )
 
 const DefaultDockerHost = "unix:///var/run/docker.sock"
@@ -39,6 +40,8 @@ type Config struct {
 	StopTimeout time.Duration
 	LogJSON     bool
 	LogLevel    slog.Level
+	// NotifyURL is a comma-separated list of Shoutrrr service URLs (e.g. gotify://host/message?token=…).
+	NotifyURL string
 }
 
 // FromArgs parses os.Args[1:] into Config.
@@ -124,6 +127,12 @@ func FromArgs(args []string) (*Config, error) {
 		logLevelDef = strings.TrimSpace(*fc.LogLevel)
 	}
 
+	notifyURLDef := ""
+	if fc != nil && fc.NotifyURL != nil {
+		notifyURLDef = strings.TrimSpace(*fc.NotifyURL)
+	}
+	notifyURLDef = envOr(EnvNotifyURL, notifyURLDef)
+
 	fs := flag.NewFlagSet("kran", flag.ContinueOnError)
 	fs.String("config", "", "path to YAML or JSON config file (or "+EnvConfig+")")
 	var (
@@ -136,6 +145,7 @@ func FromArgs(args []string) (*Config, error) {
 		stopTimeout = fs.Duration("stop-timeout", stopTimeoutDef, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
 		logJSON     = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
 		logLevel    = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
+		notifyURL   = fs.String("notify-url", notifyURLDef, "comma-separated Shoutrrr URLs (or "+EnvNotifyURL+"); see https://containrrr.dev/shoutrrr/")
 	)
 
 	fs.Usage = printUsage
@@ -161,6 +171,9 @@ func FromArgs(args []string) (*Config, error) {
 		}
 		*stopTimeout = d
 	}
+	if v := os.Getenv(EnvNotifyURL); v != "" {
+		*notifyURL = strings.TrimSpace(v)
+	}
 
 	logLevelStr := strings.TrimSpace(*logLevel)
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
@@ -181,6 +194,7 @@ func FromArgs(args []string) (*Config, error) {
 		StopTimeout: *stopTimeout,
 		LogJSON:     *logJSON,
 		LogLevel:    parsedLevel,
+		NotifyURL:   strings.TrimSpace(*notifyURL),
 	}
 
 	if cfg.Interval < time.Second {
@@ -217,9 +231,11 @@ func printUsage() {
 	fmt.Fprintln(out, "    JSON logs (env KRAN_LOG_JSON)")
 	fmt.Fprintln(out, "  -log-level string")
 	fmt.Fprintln(out, "    debug, info, warn, error (env "+EnvLogLevel+", default info)")
+	fmt.Fprintln(out, "  -notify-url string")
+	fmt.Fprintln(out, "    comma-separated Shoutrrr URLs (env "+EnvNotifyURL+"); e.g. gotify://host/message?token=…")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Environment: "+EnvConfig+", KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
-	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel)
+	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel+", "+EnvNotifyURL)
 }
 
 func parseLogLevel(s string) (slog.Level, error) {

@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/glaslos/kran/internal/config"
+	"github.com/glaslos/kran/internal/notify"
 	"github.com/glaslos/kran/internal/recreate"
 )
 
@@ -177,6 +178,13 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 		"container", params.Name,
 		"old_container_id", shortID(oldCID),
 		"new_container_id", shortID(newCID))
+
+	if cfg.NotifyURL != "" {
+		body := notify.FormatContainerUpdated(params.Name, imageRef, shortID(oldCID), shortID(newCID))
+		if err := notify.Send(cfg.NotifyURL, "kran: container updated", body); err != nil {
+			log.Warn("notify failed", "err", err)
+		}
+	}
 
 	if cfg.Cleanup {
 		if err := dc.PruneDanglingImages(ctx); err != nil {
