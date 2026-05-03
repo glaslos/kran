@@ -21,6 +21,9 @@ services:
       KRAN_INTERVAL: 5m
       # KRAN_CONFIG: /etc/kran/kran.yaml
       # KRAN_LABEL_ENABLE: "1"
+      # KRAN_HTTP_ADDR: ":9090"   # /healthz and /metrics (expose only if needed)
+    # ports:
+    #   - "9090:9090"
     command:
       - "--label-enable"
       - "--self-name=kran"

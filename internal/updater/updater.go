@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/glaslos/kran/internal/config"
+	"github.com/glaslos/kran/internal/metrics"
 	"github.com/glaslos/kran/internal/notify"
 	"github.com/glaslos/kran/internal/recreate"
 )
@@ -28,14 +29,14 @@ type Docker interface {
 }
 
 // Run polls until ctx is cancelled.
-func Run(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker) error {
+func Run(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics) error {
 	next := time.After(0)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-next:
-			if err := Tick(ctx, log, cfg, dc); err != nil {
+			if err := Tick(ctx, log, cfg, dc, m); err != nil {
 				log.Error("tick failed", "err", err)
 			}
 			next = time.After(cfg.Interval)
@@ -44,19 +45,27 @@ func Run(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker) e
 }
 
 // Tick performs one scan of running containers.
-func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker) error {
+func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics) error {
+	start := time.Now()
 	list, err := dc.ListRunning(ctx)
 	if err != nil {
+		m.ObserveTick(time.Since(start), 0, 0, err)
 		return err
 	}
+	managedCount := 0
 	for _, c := range list {
 		select {
 		case <-ctx.Done():
+			m.ObserveTick(time.Since(start), len(list), managedCount, ctx.Err())
 			return ctx.Err()
 		default:
 		}
 		hintName, hintImage := listContainerHint(c)
-		if err := processContainer(ctx, log, cfg, dc, c.ID); err != nil {
+		ok, err := processContainer(ctx, log, cfg, dc, m, c.ID)
+		if ok {
+			managedCount++
+		}
+		if err != nil {
 			log.Warn("container skipped or failed",
 				"id", c.ID,
 				"container", hintName,
@@ -64,6 +73,7 @@ func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker) 
 				"err", err)
 		}
 	}
+	m.ObserveTick(time.Since(start), len(list), managedCount, nil)
 	return nil
 }
 
@@ -74,18 +84,19 @@ func listContainerHint(c types.Container) (name, image string) {
 	return name, c.Image
 }
 
-func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, id string) error {
+func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, id string) (managed bool, err error) {
 	in, err := dc.Inspect(ctx, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !Managed(in, cfg) {
-		return nil
+		return false, nil
 	}
+	managed = true
 
 	name, imageRef, oldImageID, ok := containerImageState(in)
 	if !ok {
-		return nil
+		return managed, nil
 	}
 
 	log.Debug("checking container",
@@ -93,16 +104,16 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 		"image", imageRef,
 		"container_id", shortID(id))
 
-	changed, newImageID, err := imageChangedAfterPull(ctx, dc, imageRef, oldImageID)
+	changed, newImageID, err := imageChangedAfterPull(ctx, dc, m, imageRef, oldImageID)
 	if err != nil {
-		return err
+		return managed, err
 	}
 	if !changed {
 		log.Debug("image up to date",
 			"container", name,
 			"image", imageRef,
 			"image_id", shortID(oldImageID))
-		return nil
+		return managed, nil
 	}
 
 	log.Info("new image available",
@@ -117,10 +128,11 @@ func processContainer(ctx context.Context, log *slog.Logger, cfg *config.Config,
 			"image", imageRef,
 			"old_image_id", shortID(oldImageID),
 			"new_image_id", shortID(newImageID))
-		return nil
+		m.ObserveUpdate("dry_run", 0)
+		return managed, nil
 	}
 
-	return recreateContainer(ctx, log, cfg, dc, id, in, imageRef)
+	return managed, recreateContainer(ctx, log, cfg, dc, m, id, in, imageRef)
 }
 
 func containerImageState(in types.ContainerJSON) (name, imageRef, oldImageID string, ok bool) {
@@ -136,10 +148,13 @@ func containerImageState(in types.ContainerJSON) (name, imageRef, oldImageID str
 	return name, imageRef, oldImageID, true
 }
 
-func imageChangedAfterPull(ctx context.Context, dc Docker, imageRef, oldImageID string) (changed bool, newImageID string, err error) {
+func imageChangedAfterPull(ctx context.Context, dc Docker, m *metrics.Metrics, imageRef, oldImageID string) (changed bool, newImageID string, err error) {
+	pullStart := time.Now()
 	if err := dc.PullImage(ctx, imageRef); err != nil {
+		m.ObservePull("failure", time.Since(pullStart))
 		return false, "", err
 	}
+	m.ObservePull("success", time.Since(pullStart))
 	newImg, err := dc.ImageInspect(ctx, imageRef)
 	if err != nil {
 		return false, "", err
@@ -148,9 +163,10 @@ func imageChangedAfterPull(ctx context.Context, dc Docker, imageRef, oldImageID 
 	return oldImageID != newID, newID, nil
 }
 
-func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, oldCID string, in types.ContainerJSON, imageRef string) error {
+func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, oldCID string, in types.ContainerJSON, imageRef string) error {
 	params, err := recreate.FromInspect(in, imageRef)
 	if err != nil {
+		m.ObserveUpdate("failure", 0)
 		return err
 	}
 
@@ -159,20 +175,27 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 		sec = 1
 	}
 
+	recStart := time.Now()
 	if err := dc.Stop(ctx, oldCID, &sec); err != nil {
+		m.ObserveUpdate("failure", time.Since(recStart))
 		return err
 	}
 	if err := dc.Remove(ctx, oldCID, cfg.Cleanup); err != nil {
+		m.ObserveUpdate("failure", time.Since(recStart))
 		return err
 	}
 
 	newCID, err := dc.Create(ctx, params.Name, params.Config, params.HostConfig, params.NetworkingConfig)
 	if err != nil {
+		m.ObserveUpdate("failure", time.Since(recStart))
 		return err
 	}
 	if err := dc.Start(ctx, newCID); err != nil {
+		m.ObserveUpdate("failure", time.Since(recStart))
 		return err
 	}
+
+	m.ObserveUpdate("success", time.Since(recStart))
 
 	log.Info("recreated container",
 		"container", params.Name,
@@ -183,6 +206,9 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 		body := notify.FormatContainerUpdated(params.Name, imageRef, shortID(oldCID), shortID(newCID))
 		if err := notify.Send(cfg.NotifyURL, "kran: container updated", body); err != nil {
 			log.Warn("notify failed", "err", err)
+			m.ObserveNotify("failure")
+		} else {
+			m.ObserveNotify("success")
 		}
 	}
 

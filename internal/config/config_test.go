@@ -13,6 +13,7 @@ func TestFromArgs_defaults(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv(EnvLogLevel, "")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -29,12 +30,16 @@ func TestFromArgs_defaults(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Fatalf("LogLevel: got %v want info", cfg.LogLevel)
 	}
+	if cfg.HTTPAddr != "" {
+		t.Fatalf("HTTPAddr: got %q want empty", cfg.HTTPAddr)
+	}
 }
 
 func TestFromArgs_envInterval(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "10m")
 	t.Setenv(EnvLogLevel, "")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	cfg, err := FromArgs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -47,6 +52,7 @@ func TestFromArgs_envInterval(t *testing.T) {
 func TestFromArgs_invalidInterval(t *testing.T) {
 	t.Setenv("KRAN_INTERVAL", "not-a-duration")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	_, err := FromArgs(nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -74,6 +80,7 @@ func TestTruth_envBool(t *testing.T) {
 func TestFromArgs_LogLevelEnv(t *testing.T) {
 	t.Setenv(EnvLogLevel, "debug")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
 	cfg, err := FromArgs(nil)
 	if err != nil {
@@ -87,6 +94,7 @@ func TestFromArgs_LogLevelEnv(t *testing.T) {
 func TestFromArgs_invalidLogLevel(t *testing.T) {
 	t.Setenv(EnvLogLevel, "verbose")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLogLevel) })
 	_, err := FromArgs(nil)
 	if err == nil {
@@ -98,6 +106,7 @@ func TestFromArgs_LabelEnableEnv(t *testing.T) {
 	t.Setenv(EnvLabelEnable, "1")
 	t.Setenv(EnvLogLevel, "")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvLabelEnable) })
 	cfg, err := FromArgs(nil)
 	if err != nil {
@@ -120,6 +129,7 @@ func TestFromArgs_configFile(t *testing.T) {
 	t.Setenv(EnvLogJSON, "")
 	t.Setenv(EnvConfig, "")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 
 	path := filepath.Join(t.TempDir(), "kran.yaml")
 	content := `
@@ -132,6 +142,7 @@ cleanup: true
 stop_timeout: 15s
 log_json: true
 log_level: warn
+http_addr: ":8080"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -156,6 +167,9 @@ log_level: warn
 	if !cfg.LogJSON || cfg.LogLevel != slog.LevelWarn {
 		t.Fatalf("logging: json=%v level=%v", cfg.LogJSON, cfg.LogLevel)
 	}
+	if cfg.HTTPAddr != ":8080" {
+		t.Fatalf("HTTPAddr: got %q", cfg.HTTPAddr)
+	}
 }
 
 func TestFromArgs_configFile_envOverridesFile(t *testing.T) {
@@ -170,6 +184,7 @@ func TestFromArgs_configFile_envOverridesFile(t *testing.T) {
 	t.Setenv(EnvLogJSON, "")
 	t.Setenv(EnvConfig, "")
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	t.Cleanup(func() { _ = os.Unsetenv(EnvInterval) })
 
 	path := filepath.Join(t.TempDir(), "kran.yaml")
@@ -188,6 +203,7 @@ func TestFromArgs_configFile_envOverridesFile(t *testing.T) {
 
 func TestFromArgs_configFile_missing(t *testing.T) {
 	t.Setenv(EnvConfig, "")
+	t.Setenv(EnvHTTPAddr, "")
 	_, err := FromArgs([]string{"-config", filepath.Join(t.TempDir(), "nope.yaml")})
 	if err == nil {
 		t.Fatal("expected error for missing config file")
@@ -196,6 +212,7 @@ func TestFromArgs_configFile_missing(t *testing.T) {
 
 func TestFromArgs_notifyFromFile(t *testing.T) {
 	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
 	t.Setenv(EnvConfig, "")
 
 	path := filepath.Join(t.TempDir(), "kran.yaml")
@@ -212,5 +229,37 @@ notify_url: gotify://push.example.com/message?token=secret&priority=8
 	want := "gotify://push.example.com/message?token=secret&priority=8"
 	if cfg.NotifyURL != want {
 		t.Fatalf("NotifyURL: got %q want %q", cfg.NotifyURL, want)
+	}
+}
+
+func TestFromArgs_httpAddrEnv(t *testing.T) {
+	t.Setenv(EnvHTTPAddr, ":9090")
+	t.Setenv(EnvNotifyURL, "")
+	t.Cleanup(func() { _ = os.Unsetenv(EnvHTTPAddr) })
+	cfg, err := FromArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTPAddr != ":9090" {
+		t.Fatalf("HTTPAddr: got %q", cfg.HTTPAddr)
+	}
+}
+
+func TestFromArgs_httpAddrEnvOverridesFile(t *testing.T) {
+	t.Setenv(EnvHTTPAddr, ":7777")
+	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvConfig, "")
+	t.Cleanup(func() { _ = os.Unsetenv(EnvHTTPAddr) })
+
+	path := filepath.Join(t.TempDir(), "kran.yaml")
+	if err := os.WriteFile(path, []byte("http_addr: :8080\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := FromArgs([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HTTPAddr != ":7777" {
+		t.Fatalf("expected KRAN_HTTP_ADDR to override file, got %q", cfg.HTTPAddr)
 	}
 }

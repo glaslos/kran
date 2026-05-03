@@ -6,12 +6,15 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/glaslos/kran/internal/config"
 	"github.com/glaslos/kran/internal/docker"
+	"github.com/glaslos/kran/internal/httpserver"
+	"github.com/glaslos/kran/internal/metrics"
 	"github.com/glaslos/kran/internal/notify"
 	"github.com/glaslos/kran/internal/updater"
 )
@@ -54,7 +57,24 @@ func run() error {
 		}
 	}
 
-	return updater.Run(ctx, log, cfg, dc)
+	m := metrics.New()
+	if cfg.HTTPAddr != "" {
+		r := httpserver.NewRouter(log)
+		r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		r.Method(http.MethodGet, "/metrics", m.Handler())
+
+		go func() {
+			if err := httpserver.Serve(ctx, log, cfg.HTTPAddr, r); err != nil {
+				log.Error("http server stopped", "err", err)
+				cancel()
+			}
+		}()
+		log.Info("http listening", "addr", cfg.HTTPAddr)
+	}
+
+	return updater.Run(ctx, log, cfg, dc, m)
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {

@@ -22,6 +22,7 @@ const (
 	EnvLogJSON     = "KRAN_LOG_JSON"
 	EnvLogLevel    = "KRAN_LOG_LEVEL"
 	EnvNotifyURL   = "KRAN_NOTIFY_URL"
+	EnvHTTPAddr    = "KRAN_HTTP_ADDR"
 )
 
 const DefaultDockerHost = "unix:///var/run/docker.sock"
@@ -42,6 +43,8 @@ type Config struct {
 	LogLevel    slog.Level
 	// NotifyURL is a comma-separated list of Shoutrrr service URLs (e.g. gotify://host/message?token=…).
 	NotifyURL string
+	// HTTPAddr is the listen address for the HTTP API (e.g. ":9090"). Empty disables the server.
+	HTTPAddr string
 }
 
 // FromArgs parses os.Args[1:] into Config.
@@ -133,6 +136,12 @@ func FromArgs(args []string) (*Config, error) {
 	}
 	notifyURLDef = envOr(EnvNotifyURL, notifyURLDef)
 
+	httpAddrDef := ""
+	if fc != nil && fc.HTTPAddr != nil {
+		httpAddrDef = strings.TrimSpace(*fc.HTTPAddr)
+	}
+	httpAddrDef = envOr(EnvHTTPAddr, httpAddrDef)
+
 	fs := flag.NewFlagSet("kran", flag.ContinueOnError)
 	fs.String("config", "", "path to YAML or JSON config file (or "+EnvConfig+")")
 	var (
@@ -146,6 +155,7 @@ func FromArgs(args []string) (*Config, error) {
 		logJSON     = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
 		logLevel    = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
 		notifyURL   = fs.String("notify-url", notifyURLDef, "comma-separated Shoutrrr URLs (or "+EnvNotifyURL+"); see https://containrrr.dev/shoutrrr/")
+		httpAddr    = fs.String("http-addr", httpAddrDef, "HTTP listen address for /healthz and /metrics (or "+EnvHTTPAddr+"); empty to disable")
 	)
 
 	fs.Usage = printUsage
@@ -174,6 +184,9 @@ func FromArgs(args []string) (*Config, error) {
 	if v := os.Getenv(EnvNotifyURL); v != "" {
 		*notifyURL = strings.TrimSpace(v)
 	}
+	if v := os.Getenv(EnvHTTPAddr); v != "" {
+		*httpAddr = strings.TrimSpace(v)
+	}
 
 	logLevelStr := strings.TrimSpace(*logLevel)
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
@@ -195,6 +208,7 @@ func FromArgs(args []string) (*Config, error) {
 		LogJSON:     *logJSON,
 		LogLevel:    parsedLevel,
 		NotifyURL:   strings.TrimSpace(*notifyURL),
+		HTTPAddr:    strings.TrimSpace(*httpAddr),
 	}
 
 	if cfg.Interval < time.Second {
@@ -233,9 +247,11 @@ func printUsage() {
 	fmt.Fprintln(out, "    debug, info, warn, error (env "+EnvLogLevel+", default info)")
 	fmt.Fprintln(out, "  -notify-url string")
 	fmt.Fprintln(out, "    comma-separated Shoutrrr URLs (env "+EnvNotifyURL+"); e.g. gotify://host/message?token=…")
+	fmt.Fprintln(out, "  -http-addr string")
+	fmt.Fprintln(out, "    HTTP listen address for /healthz and /metrics (env "+EnvHTTPAddr+"); empty to disable")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Environment: "+EnvConfig+", KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
-	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel+", "+EnvNotifyURL)
+	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel+", "+EnvNotifyURL+", "+EnvHTTPAddr)
 }
 
 func parseLogLevel(s string) (slog.Level, error) {

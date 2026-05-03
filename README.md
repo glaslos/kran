@@ -39,7 +39,7 @@ That file holds credentials: keep the mount read-only and restrict permissions o
 
 ## Configuration
 
-You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`).
+You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`, `notify_url`, `http_addr`).
 
 Example:
 
@@ -61,8 +61,38 @@ self_name: kran
 | `-stop-timeout` / `KRAN_STOP_TIMEOUT` | Grace period before SIGKILL when stopping (default `10s`) |
 | `-log-json` / `KRAN_LOG_JSON` | Emit structured JSON logs |
 | `-log-level` / `KRAN_LOG_LEVEL` | Minimum log level: `debug`, `info`, `warn`, `error` (default `info`) |
+| `-notify-url` / `KRAN_NOTIFY_URL` | Comma-separated [Shoutrrr](https://containrrr.dev/shoutrrr/) URLs for notifications after a recreate |
+| `-http-addr` / `KRAN_HTTP_ADDR` | HTTP listen address (e.g. `:9090`) for `/healthz` and Prometheus `/metrics`; empty disables |
 
 Containers with label `kran.ignore=true` are never updated.
+
+## HTTP / metrics
+
+When `-http-addr` (or `KRAN_HTTP_ADDR` / `http_addr` in the config file) is set, kran serves a small HTTP API on that address:
+
+- **`GET /healthz`** — returns `200 OK` (liveness).
+- **`GET /metrics`** — Prometheus exposition format.
+
+There is no authentication or TLS on this listener; bind to localhost or place a reverse proxy in front if the port is reachable from untrusted networks.
+
+### Exported `kran_*` metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `kran_build_info` | gauge (labels `version`, `commit`) | Build metadata |
+| `kran_tick_total` | counter | Poll ticks completed |
+| `kran_tick_errors_total` | counter | Ticks that failed (e.g. list containers error) |
+| `kran_tick_duration_seconds` | histogram | Wall time per tick |
+| `kran_last_tick_timestamp_seconds` | gauge | Unix time of last successful tick |
+| `kran_containers_scanned` | gauge | Running containers seen on last successful tick |
+| `kran_containers_managed` | gauge | Containers eligible for updates after the `Managed` filter |
+| `kran_image_pulls_total` | counter (`result`) | Image pulls by outcome |
+| `kran_image_pull_duration_seconds` | histogram | Docker pull duration |
+| `kran_updates_total` | counter (`result`) | Updates: `success`, `failure`, or `dry_run` |
+| `kran_update_duration_seconds` | histogram | Recreate duration (stop through start) |
+| `kran_notify_notifications_total` | counter (`result`) | Shoutrrr notify attempts |
+
+Standard Go and process metrics are also registered on the same registry.
 
 ## Docker Compose labels
 
