@@ -21,7 +21,7 @@ type Docker interface {
 	PullImage(ctx context.Context, ref string) error
 	ImageInspect(ctx context.Context, ref string) (types.ImageInspect, error)
 	Stop(ctx context.Context, id string, timeoutSec *int) error
-	Remove(ctx context.Context, id string) error
+	Remove(ctx context.Context, id string, removeVolumes bool) error
 	Create(ctx context.Context, name string, cfg *container.Config, hc *container.HostConfig, nc *network.NetworkingConfig) (string, error)
 	Start(ctx context.Context, id string) error
 	PruneDanglingImages(ctx context.Context) error
@@ -162,7 +162,7 @@ func recreateContainer(ctx context.Context, log *slog.Logger, cfg *config.Config
 	if err := dc.Stop(ctx, oldCID, &sec); err != nil {
 		return err
 	}
-	if err := dc.Remove(ctx, oldCID); err != nil {
+	if err := dc.Remove(ctx, oldCID, cfg.Cleanup); err != nil {
 		return err
 	}
 

@@ -16,6 +16,27 @@ See [`docker-compose.example.yaml`](docker-compose.example.yaml) for a Compose-b
 
 Mounting `docker.sock` grants control over the host’s Docker daemon (and effectively root on the host). Run `kran` only on hosts where that trade-off is acceptable.
 
+## Private registry authentication
+
+Image pulls run inside the `kran` process and use the Docker client’s default config path (`/root/.docker/config.json` in the published image, which runs as root). To pull from a private registry, mount your host `config.json` read-only:
+
+```bash
+docker run -d --name kran \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "${HOME}/.docker/config.json:/root/.docker/config.json:ro" \
+  ghcr.io/glaslos/kran:latest
+```
+
+In Compose:
+
+```yaml
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
+  - ${HOME}/.docker/config.json:/root/.docker/config.json:ro
+```
+
+That file holds credentials: keep the mount read-only and restrict permissions on the host. If your config uses `credsStore` or other helpers that run host binaries, they may not work inside the minimal image; entries under `auths` (base64-encoded `username:token`) are the reliable approach for in-container pulls.
+
 ## Configuration
 
 You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`).
@@ -36,7 +57,7 @@ self_name: kran
 | `-label-enable` / `KRAN_LABEL_ENABLE` | Only update containers with label `kran.enable=true` |
 | `-self-name` / `KRAN_SELF_NAME` | Container name to skip (set this to your `kran` container name to avoid self-updates) |
 | `-dry-run` / `KRAN_DRY_RUN` | Pull and detect updates but do not recreate |
-| `-cleanup` / `KRAN_CLEANUP` | After a successful recreate, prune dangling images |
+| `-cleanup` / `KRAN_CLEANUP` | After a successful recreate: remove **anonymous** volumes from the old container (named volumes are unchanged), then prune dangling images |
 | `-stop-timeout` / `KRAN_STOP_TIMEOUT` | Grace period before SIGKILL when stopping (default `10s`) |
 | `-log-json` / `KRAN_LOG_JSON` | Emit structured JSON logs |
 | `-log-level` / `KRAN_LOG_LEVEL` | Minimum log level: `debug`, `info`, `warn`, `error` (default `info`) |

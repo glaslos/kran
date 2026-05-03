@@ -94,9 +94,9 @@ func (c *Client) Stop(ctx context.Context, id string, timeoutSec *int) error {
 	return nil
 }
 
-// Remove removes a container.
-func (c *Client) Remove(ctx context.Context, id string) error {
-	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{RemoveVolumes: false, Force: true}); err != nil {
+// Remove removes a container. When removeVolumes is true, anonymous volumes attached to the container are removed.
+func (c *Client) Remove(ctx context.Context, id string, removeVolumes bool) error {
+	if err := c.cli.ContainerRemove(ctx, id, container.RemoveOptions{RemoveVolumes: removeVolumes, Force: true}); err != nil {
 		return fmt.Errorf("docker: remove container %s: %w", id, err)
 	}
 	return nil

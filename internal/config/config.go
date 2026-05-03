@@ -141,7 +141,7 @@ func FromArgs(args []string) (*Config, error) {
 		labelEnable = fs.Bool("label-enable", labelEnableDef, "only update containers with label "+LabelEnableKey+"=true (or "+EnvLabelEnable+"=1)")
 		selfName    = fs.String("self-name", selfNameDef, "container name to exclude (this updater), without leading slash (or "+EnvSelfName+")")
 		dryRun      = fs.Bool("dry-run", dryRunDef, "log actions only, do not change containers")
-		cleanup     = fs.Bool("cleanup", cleanupDef, "remove dangling images after a successful update")
+		cleanup     = fs.Bool("cleanup", cleanupDef, "after a successful recreate: remove anonymous volumes from the old container and prune dangling images")
 		stopTimeout = fs.Duration("stop-timeout", stopTimeoutDef, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
 		logJSON     = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
 		logLevel    = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")

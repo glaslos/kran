@@ -14,6 +14,7 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro # host timezone
       # Optional: mount a YAML/JSON config (set KRAN_CONFIG or pass --config).
       # - ./kran.yaml:/etc/kran/kran.yaml:ro
     environment:
