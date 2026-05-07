@@ -30,13 +30,19 @@ type Docker interface {
 	PruneDanglingImages(ctx context.Context) error
 }
 
-// Run polls until ctx is cancelled.
-func Run(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics) error {
+// Run polls until ctx is cancelled. If onDemand is non-nil, receiving from it runs an immediate Tick
+// and resets the poll timer (same as completing a scheduled tick).
+func Run(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, m *metrics.Metrics, onDemand <-chan struct{}) error {
 	next := time.After(0)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-onDemand:
+			if err := Tick(ctx, log, cfg, dc, m); err != nil {
+				log.Error("tick failed", "err", err)
+			}
+			next = time.After(cfg.Interval)
 		case <-next:
 			if err := Tick(ctx, log, cfg, dc, m); err != nil {
 				log.Error("tick failed", "err", err)

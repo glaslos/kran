@@ -13,17 +13,18 @@ const EnvConfig = "KRAN_CONFIG"
 
 // fileConfig holds optional keys from a YAML/JSON config file.
 type fileConfig struct {
-	Interval    *string `yaml:"interval"`
-	DockerHost  *string `yaml:"docker_host"`
-	LabelEnable *bool   `yaml:"label_enable"`
-	SelfName    *string `yaml:"self_name"`
-	DryRun      *bool   `yaml:"dry_run"`
-	Cleanup     *bool   `yaml:"cleanup"`
-	StopTimeout *string `yaml:"stop_timeout"`
-	LogJSON     *bool   `yaml:"log_json"`
-	LogLevel    *string `yaml:"log_level"`
-	NotifyURL   *string `yaml:"notify_url"`
-	HTTPAddr    *string `yaml:"http_addr"`
+	Interval      *string `yaml:"interval"`
+	DockerHost    *string `yaml:"docker_host"`
+	LabelEnable   *bool   `yaml:"label_enable"`
+	SelfName      *string `yaml:"self_name"`
+	DryRun        *bool   `yaml:"dry_run"`
+	Cleanup       *bool   `yaml:"cleanup"`
+	StopTimeout   *string `yaml:"stop_timeout"`
+	LogJSON       *bool   `yaml:"log_json"`
+	LogLevel      *string `yaml:"log_level"`
+	NotifyURL     *string `yaml:"notify_url"`
+	HTTPAddr      *string `yaml:"http_addr"`
+	WebhookAPIKey *string `yaml:"webhook_api_key"`
 }
 
 func loadConfigFile(path string) (*fileConfig, error) {

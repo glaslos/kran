@@ -57,6 +57,17 @@ func run() error {
 		}
 	}
 
+	if cfg.WebhookAPIKey != "" && cfg.HTTPAddr == "" {
+		return fmt.Errorf("webhook-api-key requires -http-addr")
+	}
+
+	var onDemand <-chan struct{}
+	var triggerTick chan struct{}
+	if cfg.WebhookAPIKey != "" {
+		triggerTick = make(chan struct{}, 1)
+		onDemand = triggerTick
+	}
+
 	m := metrics.New()
 	if cfg.HTTPAddr != "" {
 		r := httpserver.NewRouter(log)
@@ -64,6 +75,14 @@ func run() error {
 			w.WriteHeader(http.StatusOK)
 		})
 		r.Method(http.MethodGet, "/metrics", m.Handler())
+		if cfg.WebhookAPIKey != "" {
+			r.Post("/webhook/update", httpserver.WebhookUpdateHandler(cfg.WebhookAPIKey, func() {
+				select {
+				case triggerTick <- struct{}{}:
+				default:
+				}
+			}))
+		}
 
 		go func() {
 			if err := httpserver.Serve(ctx, log, cfg.HTTPAddr, r); err != nil {
@@ -74,7 +93,7 @@ func run() error {
 		log.Info("http listening", "addr", cfg.HTTPAddr)
 	}
 
-	return updater.Run(ctx, log, cfg, dc, m)
+	return updater.Run(ctx, log, cfg, dc, m, onDemand)
 }
 
 func newLogger(cfg *config.Config) *slog.Logger {

@@ -39,7 +39,7 @@ That file holds credentials: keep the mount read-only and restrict permissions o
 
 ## Configuration
 
-You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`, `notify_url`, `http_addr`).
+You can pass a **mounted YAML or JSON file** with `-config /path/to/kran.yaml` or `KRAN_CONFIG=/path/to/kran.yaml`. CLI flags and environment variables override values from the file (same names as below, using `snake_case` keys in the file: `docker_host`, `label_enable`, `self_name`, `dry_run`, `cleanup`, `stop_timeout`, `log_json`, `log_level`, `notify_url`, `http_addr`, `webhook_api_key`).
 
 Example:
 
@@ -63,6 +63,7 @@ self_name: kran
 | `-log-level` / `KRAN_LOG_LEVEL` | Minimum log level: `debug`, `info`, `warn`, `error` (default `info`) |
 | `-notify-url` / `KRAN_NOTIFY_URL` | Comma-separated [Shoutrrr](https://containrrr.dev/shoutrrr/) URLs for notifications after a recreate |
 | `-http-addr` / `KRAN_HTTP_ADDR` | HTTP listen address (e.g. `:9090`) for `/healthz` and Prometheus `/metrics`; empty disables |
+| `-webhook-api-key` / `KRAN_WEBHOOK_API_KEY` | Shared secret for **`POST /webhook/update`**; requires `-http-addr` to be set. Empty disables the webhook. Authenticate with header `X-API-Key` or `Authorization: Bearer …` |
 
 Containers with label `kran.ignore=true` are never updated.
 
@@ -72,8 +73,9 @@ When `-http-addr` (or `KRAN_HTTP_ADDR` / `http_addr` in the config file) is set,
 
 - **`GET /healthz`** — returns `200 OK` (liveness).
 - **`GET /metrics`** — Prometheus exposition format.
+- **`POST /webhook/update`** — optional; enabled only when `-webhook-api-key` / `KRAN_WEBHOOK_API_KEY` / `webhook_api_key` is set. Triggers the same update pass as a scheduled poll (pull, compare digests, recreate when needed) and resets the poll timer. Returns **`202 Accepted`** on success, **`401 Unauthorized`** if the key is missing or wrong. Send the secret as **`X-API-Key: <key>`** or **`Authorization: Bearer <key>`**.
 
-There is no authentication or TLS on this listener; bind to localhost or place a reverse proxy in front if the port is reachable from untrusted networks.
+`/healthz` and `/metrics` are not authenticated. The webhook is protected by the shared key, but there is still **no TLS** on this listener; bind to localhost or terminate TLS at a reverse proxy if the port is reachable from untrusted networks. Treat the webhook key like a password: use a long random value and avoid logging it.
 
 ### Exported `kran_*` metrics
 

@@ -12,17 +12,18 @@ import (
 )
 
 const (
-	EnvInterval    = "KRAN_INTERVAL"
-	EnvDockerHost  = "DOCKER_HOST"
-	EnvLabelEnable = "KRAN_LABEL_ENABLE"
-	EnvSelfName    = "KRAN_SELF_NAME"
-	EnvDryRun      = "KRAN_DRY_RUN"
-	EnvCleanup     = "KRAN_CLEANUP"
-	EnvStopTimeout = "KRAN_STOP_TIMEOUT"
-	EnvLogJSON     = "KRAN_LOG_JSON"
-	EnvLogLevel    = "KRAN_LOG_LEVEL"
-	EnvNotifyURL   = "KRAN_NOTIFY_URL"
-	EnvHTTPAddr    = "KRAN_HTTP_ADDR"
+	EnvInterval      = "KRAN_INTERVAL"
+	EnvDockerHost    = "DOCKER_HOST"
+	EnvLabelEnable   = "KRAN_LABEL_ENABLE"
+	EnvSelfName      = "KRAN_SELF_NAME"
+	EnvDryRun        = "KRAN_DRY_RUN"
+	EnvCleanup       = "KRAN_CLEANUP"
+	EnvStopTimeout   = "KRAN_STOP_TIMEOUT"
+	EnvLogJSON       = "KRAN_LOG_JSON"
+	EnvLogLevel      = "KRAN_LOG_LEVEL"
+	EnvNotifyURL     = "KRAN_NOTIFY_URL"
+	EnvHTTPAddr      = "KRAN_HTTP_ADDR"
+	EnvWebhookAPIKey = "KRAN_WEBHOOK_API_KEY"
 )
 
 const DefaultDockerHost = "unix:///var/run/docker.sock"
@@ -49,6 +50,9 @@ type Config struct {
 	NotifyURL string
 	// HTTPAddr is the listen address for the HTTP API (e.g. ":9090"). Empty disables the server.
 	HTTPAddr string
+	// WebhookAPIKey, if set, enables POST /webhook/update when HTTPAddr is set. Authenticate with
+	// header X-API-Key or Authorization: Bearer <key>.
+	WebhookAPIKey string
 }
 
 // FromArgs parses os.Args[1:] into Config.
@@ -146,20 +150,27 @@ func FromArgs(args []string) (*Config, error) {
 	}
 	httpAddrDef = envOr(EnvHTTPAddr, httpAddrDef)
 
+	webhookKeyDef := ""
+	if fc != nil && fc.WebhookAPIKey != nil {
+		webhookKeyDef = strings.TrimSpace(*fc.WebhookAPIKey)
+	}
+	webhookKeyDef = envOr(EnvWebhookAPIKey, webhookKeyDef)
+
 	fs := flag.NewFlagSet("kran", flag.ContinueOnError)
 	fs.String("config", "", "path to YAML or JSON config file (or "+EnvConfig+")")
 	var (
-		interval    = fs.Duration("interval", intervalDef, "poll interval (e.g. 5m, 24h)")
-		dockerHost  = fs.String("docker-host", dockerHostDef, "Docker daemon address (or "+EnvDockerHost+")")
-		labelEnable = fs.Bool("label-enable", labelEnableDef, "only update containers with label "+LabelEnableKey+"=true (or "+EnvLabelEnable+"=1)")
-		selfName    = fs.String("self-name", selfNameDef, "container name to exclude (this updater), without leading slash (or "+EnvSelfName+")")
-		dryRun      = fs.Bool("dry-run", dryRunDef, "log actions only, do not change containers")
-		cleanup     = fs.Bool("cleanup", cleanupDef, "after a successful recreate: remove anonymous volumes from the old container and prune dangling images")
-		stopTimeout = fs.Duration("stop-timeout", stopTimeoutDef, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
-		logJSON     = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
-		logLevel    = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
-		notifyURL   = fs.String("notify-url", notifyURLDef, "comma-separated Shoutrrr URLs (or "+EnvNotifyURL+"); see https://containrrr.dev/shoutrrr/")
-		httpAddr    = fs.String("http-addr", httpAddrDef, "HTTP listen address for /healthz and /metrics (or "+EnvHTTPAddr+"); empty to disable")
+		interval      = fs.Duration("interval", intervalDef, "poll interval (e.g. 5m, 24h)")
+		dockerHost    = fs.String("docker-host", dockerHostDef, "Docker daemon address (or "+EnvDockerHost+")")
+		labelEnable   = fs.Bool("label-enable", labelEnableDef, "only update containers with label "+LabelEnableKey+"=true (or "+EnvLabelEnable+"=1)")
+		selfName      = fs.String("self-name", selfNameDef, "container name to exclude (this updater), without leading slash (or "+EnvSelfName+")")
+		dryRun        = fs.Bool("dry-run", dryRunDef, "log actions only, do not change containers")
+		cleanup       = fs.Bool("cleanup", cleanupDef, "after a successful recreate: remove anonymous volumes from the old container and prune dangling images")
+		stopTimeout   = fs.Duration("stop-timeout", stopTimeoutDef, "SIGTERM grace period before SIGKILL (or "+EnvStopTimeout+")")
+		logJSON       = fs.Bool("log-json", logJSONDef, "emit logs as JSON (or "+EnvLogJSON+"=1)")
+		logLevel      = fs.String("log-level", logLevelDef, "log verbosity: debug, info, warn, error (or "+EnvLogLevel+")")
+		notifyURL     = fs.String("notify-url", notifyURLDef, "comma-separated Shoutrrr URLs (or "+EnvNotifyURL+"); see https://containrrr.dev/shoutrrr/")
+		httpAddr      = fs.String("http-addr", httpAddrDef, "HTTP listen address for /healthz and /metrics (or "+EnvHTTPAddr+"); empty to disable")
+		webhookAPIKey = fs.String("webhook-api-key", webhookKeyDef, "shared secret for POST /webhook/update; requires -http-addr (or "+EnvWebhookAPIKey+")")
 	)
 
 	fs.Usage = printUsage
@@ -191,6 +202,9 @@ func FromArgs(args []string) (*Config, error) {
 	if v := os.Getenv(EnvHTTPAddr); v != "" {
 		*httpAddr = strings.TrimSpace(v)
 	}
+	if v := os.Getenv(EnvWebhookAPIKey); v != "" {
+		*webhookAPIKey = strings.TrimSpace(v)
+	}
 
 	logLevelStr := strings.TrimSpace(*logLevel)
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
@@ -202,17 +216,18 @@ func FromArgs(args []string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Interval:    *interval,
-		DockerHost:  *dockerHost,
-		LabelEnable: *labelEnable,
-		SelfName:    strings.TrimSpace(*selfName),
-		DryRun:      *dryRun,
-		Cleanup:     *cleanup,
-		StopTimeout: *stopTimeout,
-		LogJSON:     *logJSON,
-		LogLevel:    parsedLevel,
-		NotifyURL:   strings.TrimSpace(*notifyURL),
-		HTTPAddr:    strings.TrimSpace(*httpAddr),
+		Interval:      *interval,
+		DockerHost:    *dockerHost,
+		LabelEnable:   *labelEnable,
+		SelfName:      strings.TrimSpace(*selfName),
+		DryRun:        *dryRun,
+		Cleanup:       *cleanup,
+		StopTimeout:   *stopTimeout,
+		LogJSON:       *logJSON,
+		LogLevel:      parsedLevel,
+		NotifyURL:     strings.TrimSpace(*notifyURL),
+		HTTPAddr:      strings.TrimSpace(*httpAddr),
+		WebhookAPIKey: strings.TrimSpace(*webhookAPIKey),
 	}
 
 	if cfg.Interval < time.Second {
@@ -253,9 +268,11 @@ func printUsage() {
 	fmt.Fprintln(out, "    comma-separated Shoutrrr URLs (env "+EnvNotifyURL+"); e.g. gotify://host/message?token=…")
 	fmt.Fprintln(out, "  -http-addr string")
 	fmt.Fprintln(out, "    HTTP listen address for /healthz and /metrics (env "+EnvHTTPAddr+"); empty to disable")
+	fmt.Fprintln(out, "  -webhook-api-key string")
+	fmt.Fprintln(out, "    if set with -http-addr, enables POST /webhook/update (env "+EnvWebhookAPIKey+"); use X-API-Key or Authorization: Bearer")
 	fmt.Fprintln(out, "")
 	fmt.Fprintln(out, "Environment: "+EnvConfig+", KRAN_INTERVAL, DOCKER_HOST, KRAN_LABEL_ENABLE, KRAN_SELF_NAME,")
-	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel+", "+EnvNotifyURL+", "+EnvHTTPAddr)
+	fmt.Fprintln(out, "  KRAN_DRY_RUN, KRAN_CLEANUP, KRAN_STOP_TIMEOUT, KRAN_LOG_JSON, "+EnvLogLevel+", "+EnvNotifyURL+", "+EnvHTTPAddr+", "+EnvWebhookAPIKey)
 }
 
 func parseLogLevel(s string) (slog.Level, error) {

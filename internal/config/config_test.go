@@ -33,6 +33,9 @@ func TestFromArgs_defaults(t *testing.T) {
 	if cfg.HTTPAddr != "" {
 		t.Fatalf("HTTPAddr: got %q want empty", cfg.HTTPAddr)
 	}
+	if cfg.WebhookAPIKey != "" {
+		t.Fatalf("WebhookAPIKey: got %q want empty", cfg.WebhookAPIKey)
+	}
 }
 
 func TestFromArgs_envInterval(t *testing.T) {
@@ -261,5 +264,38 @@ func TestFromArgs_httpAddrEnvOverridesFile(t *testing.T) {
 	}
 	if cfg.HTTPAddr != ":7777" {
 		t.Fatalf("expected KRAN_HTTP_ADDR to override file, got %q", cfg.HTTPAddr)
+	}
+}
+
+func TestFromArgs_webhookAPIKeyEnv(t *testing.T) {
+	t.Setenv(EnvWebhookAPIKey, "hunter2")
+	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
+	t.Cleanup(func() { _ = os.Unsetenv(EnvWebhookAPIKey) })
+	cfg, err := FromArgs(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebhookAPIKey != "hunter2" {
+		t.Fatalf("WebhookAPIKey: got %q", cfg.WebhookAPIKey)
+	}
+}
+
+func TestFromArgs_webhookAPIKeyFromFile(t *testing.T) {
+	t.Setenv(EnvConfig, "")
+	t.Setenv(EnvNotifyURL, "")
+	t.Setenv(EnvHTTPAddr, "")
+	t.Setenv(EnvWebhookAPIKey, "")
+
+	path := filepath.Join(t.TempDir(), "kran.yaml")
+	if err := os.WriteFile(path, []byte("webhook_api_key: from-yaml\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := FromArgs([]string{"-config", path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebhookAPIKey != "from-yaml" {
+		t.Fatalf("WebhookAPIKey: got %q", cfg.WebhookAPIKey)
 	}
 }
