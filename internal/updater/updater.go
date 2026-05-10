@@ -81,6 +81,7 @@ func Tick(ctx context.Context, log *slog.Logger, cfg *config.Config, dc Docker, 
 		managed = append(managed, linkgroup.NewMember(c.ID, in))
 	}
 	managedCount := len(managed)
+	logAuthDebugInfo(log, managed)
 
 	byGroup := linkgroup.ClusterByGroup(managed)
 	inLinkGroup := make(map[string]struct{})
