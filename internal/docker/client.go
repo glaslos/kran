@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/docker/docker/api/types"
@@ -12,6 +13,8 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+
+	"github.com/glaslos/kran/internal/debugagent"
 )
 
 // Client wraps the Docker Engine API used by kran.
@@ -71,8 +74,18 @@ func (c *Client) ImageInspect(ctx context.Context, id string) (types.ImageInspec
 
 // PullImage pulls an image ref, discarding progress output.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
+	// #region agent log
+	debugagent.Log("H2-H3", "docker/client.go:PullImage", "ImagePull attempt", map[string]any{
+		"ref": ref, "docker_config_env": strings.TrimSpace(os.Getenv("DOCKER_CONFIG")),
+	})
+	// #endregion
 	r, err := c.cli.ImagePull(ctx, ref, image.PullOptions{})
 	if err != nil {
+		// #region agent log
+		debugagent.Log("H2-H4", "docker/client.go:PullImage", "ImagePull immediate error", map[string]any{
+			"ref": ref, "err": err.Error(),
+		})
+		// #endregion
 		return fmt.Errorf("docker: pull %q: %w", ref, err)
 	}
 	_, copyErr := io.Copy(io.Discard, r)

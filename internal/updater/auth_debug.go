@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
+	"github.com/glaslos/kran/internal/debugagent"
 	"github.com/glaslos/kran/internal/linkgroup"
 )
 
@@ -26,8 +27,16 @@ func logAuthDebugInfo(log *slog.Logger, managed []linkgroup.Member) {
 			"config", info.configPath,
 			"registries", strings.Join(privateRegs, ", "),
 			"err", err)
+		// #region agent log
+		debugagent.Log("H3", "auth_debug.go:logAuthDebugInfo", "auth config read failed", map[string]any{
+			"privateRegs": privateRegs, "configPath": info.configPath, "err": err.Error(),
+		})
+		// #endregion
 		return
 	}
+	// #region agent log
+	logAuthAgentNDJSON(privateRegs, info, "after_read")
+	// #endregion
 	if !info.hasAnyCredentials {
 		log.Warn("no docker registry credentials configured while monitoring private registries",
 			"config", info.configPath,
@@ -52,6 +61,25 @@ func logAuthDebugInfo(log *slog.Logger, managed []linkgroup.Member) {
 	log.Debug("found explicit auth entries for monitored private registries",
 		"config", info.configPath,
 		"registries", strings.Join(privateRegs, ", "))
+}
+
+func logAuthAgentNDJSON(privateRegs []string, info dockerAuthInfo, stage string) {
+	modes := make(map[string]string, len(privateRegs))
+	for _, reg := range privateRegs {
+		modes[reg] = authModeForRegistry(reg, info)
+	}
+	debugagent.Log("H1-H4", "auth_debug.go:logAuthAgentNDJSON", "docker auth layout vs private registries", map[string]any{
+		"stage":                   stage,
+		"privateRegs":             privateRegs,
+		"configPath":              info.configPath,
+		"credsStoreSet":           info.credsStoreSet,
+		"credHelperRegistries":    sortedKeys(info.credHelperHosts),
+		"inlineAuthRegistries":    sortedKeys(info.inlineCredHosts),
+		"authModeByRegistry":      modes,
+		"configFileExists":        configFileExists(info.configPath),
+		"hasAnyCredentialsParsed": info.hasAnyCredentials,
+		"authHostKeys":            sortedKeys(info.authHosts),
+	})
 }
 
 func monitoredPrivateRegistries(managed []linkgroup.Member) []string {
@@ -88,6 +116,9 @@ type dockerAuthInfo struct {
 	configPath        string
 	hasAnyCredentials bool
 	authHosts         map[string]struct{}
+	credsStoreSet     bool
+	credHelperHosts   map[string]struct{}
+	inlineCredHosts   map[string]struct{}
 }
 
 type dockerConfigFile struct {
@@ -104,8 +135,10 @@ type dockerConfigFile struct {
 func readDockerAuthInfo() (dockerAuthInfo, error) {
 	path := dockerConfigPath()
 	info := dockerAuthInfo{
-		configPath: path,
-		authHosts:  map[string]struct{}{},
+		configPath:      path,
+		authHosts:       map[string]struct{}{},
+		credHelperHosts: map[string]struct{}{},
+		inlineCredHosts: map[string]struct{}{},
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -118,7 +151,8 @@ func readDockerAuthInfo() (dockerAuthInfo, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return info, err
 	}
-	if strings.TrimSpace(cfg.CredsStore) != "" || len(cfg.CredHelpers) > 0 {
+	info.credsStoreSet = strings.TrimSpace(cfg.CredsStore) != ""
+	if info.credsStoreSet || len(cfg.CredHelpers) > 0 {
 		info.hasAnyCredentials = true
 	}
 	for host, a := range cfg.Auths {
@@ -130,14 +164,36 @@ func readDockerAuthInfo() (dockerAuthInfo, error) {
 			strings.TrimSpace(a.Username) != "" ||
 			strings.TrimSpace(a.Password) != "" {
 			info.hasAnyCredentials = true
+			if h := normalizeRegistryHost(host); h != "" {
+				info.inlineCredHosts[h] = struct{}{}
+			}
 		}
 	}
 	for host := range cfg.CredHelpers {
 		if h := normalizeRegistryHost(host); h != "" {
 			info.authHosts[h] = struct{}{}
+			info.credHelperHosts[h] = struct{}{}
 		}
 	}
 	return info, nil
+}
+
+func authModeForRegistry(reg string, info dockerAuthInfo) string {
+	if _, ok := info.inlineCredHosts[reg]; ok {
+		return "inline"
+	}
+	if _, ok := info.credHelperHosts[reg]; ok {
+		return "credhelper"
+	}
+	if info.credsStoreSet {
+		return "credsstore_fallback"
+	}
+	return "none"
+}
+
+func configFileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
 }
 
 func dockerConfigPath() string {
