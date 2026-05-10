@@ -1,11 +1,14 @@
 package updater
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/glaslos/kran/internal/config"
+	"github.com/glaslos/kran/internal/linkgroup"
 )
 
 func TestNormalizeImageID(t *testing.T) {
@@ -58,6 +61,96 @@ func TestManaged(t *testing.T) {
 		}
 		if !Managed(base, &config.Config{SelfName: "other"}) {
 			t.Fatal("expected true")
+		}
+	})
+}
+
+func TestPrivateRegistryHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		ref         string
+		wantHost    string
+		wantPrivate bool
+	}{
+		{ref: "nginx:latest", wantPrivate: false},
+		{ref: "docker.io/library/nginx:latest", wantPrivate: false},
+		{ref: "ghcr.io/glaslos/kran:latest", wantHost: "ghcr.io", wantPrivate: true},
+		{ref: "localhost:5000/my/app:1", wantHost: "localhost:5000", wantPrivate: true},
+	}
+
+	for _, tt := range tests {
+		gotHost, gotPrivate := privateRegistryHost(tt.ref)
+		if gotHost != tt.wantHost || gotPrivate != tt.wantPrivate {
+			t.Fatalf("privateRegistryHost(%q) = (%q,%v), want (%q,%v)", tt.ref, gotHost, gotPrivate, tt.wantHost, tt.wantPrivate)
+		}
+	}
+}
+
+func TestMonitoredPrivateRegistries(t *testing.T) {
+	t.Parallel()
+
+	members := []linkgroup.Member{
+		linkgroup.NewMember("1", types.ContainerJSON{
+			ContainerJSONBase: &types.ContainerJSONBase{Name: "/a"},
+			Config:            &container.Config{Image: "ghcr.io/glaslos/kran:latest"},
+		}),
+		linkgroup.NewMember("2", types.ContainerJSON{
+			ContainerJSONBase: &types.ContainerJSONBase{Name: "/b"},
+			Config:            &container.Config{Image: "nginx:latest"},
+		}),
+		linkgroup.NewMember("3", types.ContainerJSON{
+			ContainerJSONBase: &types.ContainerJSONBase{Name: "/c"},
+			Config:            &container.Config{Image: "localhost:5000/app:latest"},
+		}),
+	}
+
+	got := monitoredPrivateRegistries(members)
+	if len(got) != 2 || got[0] != "ghcr.io" || got[1] != "localhost:5000" {
+		t.Fatalf("monitoredPrivateRegistries() = %v, want [ghcr.io localhost:5000]", got)
+	}
+}
+
+func TestReadDockerAuthInfo(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		t.Setenv("DOCKER_CONFIG", t.TempDir())
+		info, err := readDockerAuthInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.hasAnyCredentials {
+			t.Fatal("expected no credentials")
+		}
+		if len(info.authHosts) != 0 {
+			t.Fatalf("expected no auth hosts, got %v", info.authHosts)
+		}
+	})
+
+	t.Run("auth entries and helpers", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("DOCKER_CONFIG", dir)
+		content := `{
+			"auths": {
+				"https://ghcr.io": {"auth": "Zm9vOmJhcg=="},
+				"index.docker.io/v1/": {}
+			},
+			"credHelpers": {"ecr.example.com":"ecr-login"}
+		}`
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, err := readDockerAuthInfo()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.hasAnyCredentials {
+			t.Fatal("expected credentials to be detected")
+		}
+		if _, ok := info.authHosts["ghcr.io"]; !ok {
+			t.Fatalf("expected ghcr.io auth host, got %v", info.authHosts)
+		}
+		if _, ok := info.authHosts["docker.io"]; !ok {
+			t.Fatalf("expected docker.io auth host normalization, got %v", info.authHosts)
 		}
 	})
 }
