@@ -453,20 +453,20 @@ func logAuthDebugInfo(log *slog.Logger, managed []linkgroup.Member) {
 	if len(privateRegs) == 0 {
 		return
 	}
-	log.Info("detected monitored containers using non-default registries", "registries", strings.Join(privateRegs, ","))
+	log.Info("detected monitored containers using non-default registries", "registries", strings.Join(privateRegs, ", "))
 
 	info, err := readDockerAuthInfo()
 	if err != nil {
 		log.Warn("unable to parse docker auth config while monitoring private registries",
 			"config", info.configPath,
-			"registries", strings.Join(privateRegs, ","),
+			"registries", strings.Join(privateRegs, ", "),
 			"err", err)
 		return
 	}
 	if !info.hasAnyCredentials {
 		log.Warn("no docker registry credentials configured while monitoring private registries",
 			"config", info.configPath,
-			"registries", strings.Join(privateRegs, ","))
+			"registries", strings.Join(privateRegs, ", "))
 		return
 	}
 
@@ -479,14 +479,14 @@ func logAuthDebugInfo(log *slog.Logger, managed []linkgroup.Member) {
 	if len(missing) > 0 {
 		log.Warn("missing explicit auth entries for monitored private registries",
 			"config", info.configPath,
-			"missing_registries", strings.Join(missing, ","),
-			"configured_registries", strings.Join(sortedKeys(info.authHosts), ","))
+			"missing_registries", strings.Join(missing, ", "),
+			"configured_registries", strings.Join(sortedKeys(info.authHosts), ", "))
 		return
 	}
 
 	log.Debug("found explicit auth entries for monitored private registries",
 		"config", info.configPath,
-		"registries", strings.Join(privateRegs, ","))
+		"registries", strings.Join(privateRegs, ", "))
 }
 
 func monitoredPrivateRegistries(managed []linkgroup.Member) []string {

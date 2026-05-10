@@ -80,10 +80,13 @@ func TestPrivateRegistryHost(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		gotHost, gotPrivate := privateRegistryHost(tt.ref)
-		if gotHost != tt.wantHost || gotPrivate != tt.wantPrivate {
-			t.Fatalf("privateRegistryHost(%q) = (%q,%v), want (%q,%v)", tt.ref, gotHost, gotPrivate, tt.wantHost, tt.wantPrivate)
-		}
+		tt := tt
+		t.Run(tt.ref, func(t *testing.T) {
+			gotHost, gotPrivate := privateRegistryHost(tt.ref)
+			if gotHost != tt.wantHost || gotPrivate != tt.wantPrivate {
+				t.Errorf("privateRegistryHost(%q) = (%q,%v), want (%q,%v)", tt.ref, gotHost, gotPrivate, tt.wantHost, tt.wantPrivate)
+			}
+		})
 	}
 }
 
@@ -136,7 +139,7 @@ func TestReadDockerAuthInfo(t *testing.T) {
 			},
 			"credHelpers": {"ecr.example.com":"ecr-login"}
 		}`
-		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		info, err := readDockerAuthInfo()
