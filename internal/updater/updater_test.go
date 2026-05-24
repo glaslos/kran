@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/glaslos/kran/internal/config"
 	"github.com/glaslos/kran/internal/linkgroup"
+	"github.com/glaslos/kran/internal/registryconfig"
 )
 
 func TestNormalizeImageID(t *testing.T) {
@@ -117,15 +118,15 @@ func TestMonitoredPrivateRegistries(t *testing.T) {
 func TestReadDockerAuthInfo(t *testing.T) {
 	t.Run("missing file", func(t *testing.T) {
 		t.Setenv("DOCKER_CONFIG", t.TempDir())
-		info, err := readDockerAuthInfo()
+		sum, err := registryconfig.Summarize()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.hasAnyCredentials {
+		if sum.HasAnyCredentials {
 			t.Fatal("expected no credentials")
 		}
-		if len(info.authHosts) != 0 {
-			t.Fatalf("expected no auth hosts, got %v", info.authHosts)
+		if len(sum.AuthHosts) != 0 {
+			t.Fatalf("expected no auth hosts, got %v", sum.AuthHosts)
 		}
 	})
 
@@ -142,18 +143,18 @@ func TestReadDockerAuthInfo(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		info, err := readDockerAuthInfo()
+		sum, err := registryconfig.Summarize()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !info.hasAnyCredentials {
+		if !sum.HasAnyCredentials {
 			t.Fatal("expected credentials to be detected")
 		}
-		if _, ok := info.authHosts["ghcr.io"]; !ok {
-			t.Fatalf("expected ghcr.io auth host, got %v", info.authHosts)
+		if _, ok := sum.AuthHosts["ghcr.io"]; !ok {
+			t.Fatalf("expected ghcr.io auth host, got %v", sum.AuthHosts)
 		}
-		if _, ok := info.authHosts["docker.io"]; !ok {
-			t.Fatalf("expected docker.io auth host normalization, got %v", info.authHosts)
+		if _, ok := sum.AuthHosts["docker.io"]; !ok {
+			t.Fatalf("expected docker.io auth host normalization, got %v", sum.AuthHosts)
 		}
 	})
 }

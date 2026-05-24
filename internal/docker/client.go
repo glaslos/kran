@@ -12,6 +12,8 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+
+	"github.com/glaslos/kran/internal/registryconfig"
 )
 
 // Client wraps the Docker Engine API used by kran.
@@ -70,8 +72,16 @@ func (c *Client) ImageInspect(ctx context.Context, id string) (types.ImageInspec
 }
 
 // PullImage pulls an image ref, discarding progress output.
+// When ~/.docker/config.json (or DOCKER_CONFIG) contains credentials for the
+// registry, they are sent as X-Registry-Auth like the Docker CLI.
 func (c *Client) PullImage(ctx context.Context, ref string) error {
-	r, err := c.cli.ImagePull(ctx, ref, image.PullOptions{})
+	opts := image.PullOptions{}
+	if encoded, err := registryconfig.EncodedPullAuth(ref); err != nil {
+		return fmt.Errorf("docker: pull %q: resolve registry auth: %w", ref, err)
+	} else if encoded != "" {
+		opts.RegistryAuth = encoded
+	}
+	r, err := c.cli.ImagePull(ctx, ref, opts)
 	if err != nil {
 		return fmt.Errorf("docker: pull %q: %w", ref, err)
 	}

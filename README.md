@@ -18,7 +18,7 @@ Mounting `docker.sock` grants control over the host’s Docker daemon (and effec
 
 ## Private registry authentication
 
-Image pulls run inside the `kran` process and use the Docker client’s default config path (`/root/.docker/config.json` in the published image, which runs as root). To pull from a private registry, mount your host `config.json` read-only:
+Image pulls are sent to the Docker API with registry credentials from the same `config.json` the Docker CLI uses (`/root/.docker/config.json` in the published image, which runs as root). Mount your host credentials read-only:
 
 ```bash
 docker run -d --name kran \
@@ -35,7 +35,7 @@ volumes:
   - ${HOME}/.docker/config.json:/root/.docker/config.json:ro
 ```
 
-That file holds credentials: keep the mount read-only and restrict permissions on the host. If your config uses `credsStore` or other helpers that run host binaries, they may not work inside the minimal image; entries under `auths` (base64-encoded `username:token`) are the reliable approach for in-container pulls.
+That file holds credentials: keep the mount read-only and restrict permissions on the host. Kran reads inline `auths` entries and sends them on each pull (like `docker pull`). If your config uses only `credsStore` or `credHelpers` (no inline `auths`), those helper binaries may not exist inside the minimal image—use inline `auths` or log in with `docker login` so credentials are stored under `auths`.
 
 ## Configuration
 
