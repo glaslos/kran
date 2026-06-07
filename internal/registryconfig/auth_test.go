@@ -1,6 +1,8 @@
 package registryconfig
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +26,23 @@ func TestEncodedPullAuth_inlineGHCR(t *testing.T) {
 	}
 	if encoded == "" {
 		t.Fatal("expected encoded registry auth for ghcr.io")
+	}
+	raw, err := base64.URLEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Username string `json:"username"`
+		Auth     string `json:"auth"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Username != "user" {
+		t.Fatalf("expected decoded username in X-Registry-Auth, got %q", payload.Username)
+	}
+	if payload.Auth != "" {
+		t.Fatal("expected config auth blob to be decoded into username/password, not passed through")
 	}
 }
 

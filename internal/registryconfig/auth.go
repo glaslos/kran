@@ -1,6 +1,7 @@
 package registryconfig
 
 import (
+	"encoding/base64"
 	"net/url"
 	"strings"
 
@@ -63,12 +64,23 @@ func (e AuthEntry) toAuthConfig(server string) registrytypes.AuthConfig {
 	ac := registrytypes.AuthConfig{ServerAddress: server}
 	if t := strings.TrimSpace(e.IdentityToken); t != "" {
 		ac.IdentityToken = t
+		return ac
+	}
+	if u := strings.TrimSpace(e.Username); u != "" || strings.TrimSpace(e.Password) != "" {
+		ac.Username = strings.TrimSpace(e.Username)
+		ac.Password = strings.TrimSpace(e.Password)
+		return ac
 	}
 	if a := strings.TrimSpace(e.Auth); a != "" {
-		ac.Auth = a
-	} else {
-		ac.Username = e.Username
-		ac.Password = e.Password
+		// Docker Engine expects decoded username/password in X-Registry-Auth, not the
+		// config.json "auth" blob (verified: auth-field → unauthorized, user-pass → OK).
+		if raw, err := base64.StdEncoding.DecodeString(a); err == nil {
+			if user, pass, ok := strings.Cut(string(raw), ":"); ok {
+				ac.Username = user
+				ac.Password = pass
+				return ac
+			}
+		}
 	}
 	return ac
 }
